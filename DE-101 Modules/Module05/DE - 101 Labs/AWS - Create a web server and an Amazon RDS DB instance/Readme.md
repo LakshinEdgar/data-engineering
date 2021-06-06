@@ -149,7 +149,221 @@
 14. Ваш новый DB instance появится в списке Databases со статусом Creating.
 15. В разделе Connectivity & security просмотрите Endpoint и Port DB instance.
 
-##3 . Создание EC2 instance и установка веб-сервера
+## 3 . Создание EC2 instance и установка веб-сервера
+#### Запуск EC2 instance
+1. Залогиньтесь в консоли AWS Management и откройте Amazon EC2 https://console.aws.amazon.com/ec2/.
+2. Выберите EC2 Dashboard и запустите instance, как показано на скрине.
+3. Выберите Amazon Linux 2 AMI.
+4. Выберите t2.micro тип instance, как показано на скрине, и затем выберите Next: Configure Instance Details.
+5. На странице Configure Instance Details установите следующие значения.
+    * Network: выберите VPC с обеими подсетями публичной и приватной, которые мы создали для DB instance vpc-identifier | tutorial-vpc
+    * Subnet: Выберите существующую подсеть subnet-identifier | Tutorial public | us-west-2a (Созданную в разделе Создание VPC группы безопасности.)
+    * Auto-assign Public IP: Выберите Enable
+
+6. Выберите Next: Add Storage
+7. На странице Add Storage оставьте значения по умолчанию и выбреите Next: Add Tags
+8. На странцие Add Tags выберите Add tag? затем введите Name для ключа и tutorial-web-server для значения
+9. Выберите Next: Configure Security Group
+10. На странице Configure Security Group выберите Select an existing security group. Затем выберите существующую группу безопасности tutorial-securitygroup, созданную в разделе Создание группы безопасности для публичного веб-сервера.
+11. Выбериет Review and Launch
+12. На странице review Instance Launch подтвердите свои настройки и нажмите Launch.
+13. На странице Select an existing key pair or create a new key pair выберите Create a new key pair и установите в Key pair name значение tutorial-key-pair. Выберите Download Key Pair и сохраните файле key pair на свой локальный компьютер. Мы будем использовать этот файл для установки соединение с EC2 instance.
+14. Запустите EC2 instance, выберите Launch Instance. На стрианице Launch Status запишите ID EC2 instance (Например: i-0288d65fd4470b6a9).
+15. Выберите View Instnce, чтобы найти ваш instance.
+16. Прежде чем продолжить, дождитесь, пока  Instance Status  не станет Running.
+
+### Установка Apache web-server с PHP.
+1. Подключитесь к EC2 instnace.
+2. Получите последние исправления ошибок и обновления безопасности, обновив ПО на EC2 instance. Для этого используйте следующую команду.
+sudo yum update -y
+3. После завршения обновления установите PHP, используя команду amazon-linux-extras install. Эта команда устанавливает несколько пакетов и заивисомстей одновременно.
+amazon-linux-extras install 
+Если у вас появится ошибка amazon-linux-extras: command not, значит ваш EC2 instance не был запущен с AMI Amazon Linux 2 (возможно, вместо него вы используете AMI Amazon Linux). Вы можете посмотреть свою версию с помощью команды:
+cat /etc/system-release
+4. Установите Apache web-сервер
+sudo yum install -y httpd
+5. Запустите web-сервер
+sudo systemctl start httpd
+Вы можете проверить правильно ли ваш сервер установлен и запущен.
+Введите значение вашего публичного DNS имени (Domain name System) EC2 instance в адресную строку браузера. Например: http://ec2-42-8-168-21.us-west-1.compute.amazonaws.com. Если web-сервер запущен, то вы увидите тестовую страницу Apache.
+Если вы не видите тестовую страницу Apache, проверьте правила группы безопасности VPC. Убедитесь, что правила активирован доступ к 80 порту для IP адресов, которые вы используете для соединения к web-серверу.
+6. Настройте web-сервер для запуска при каждой загрузке системы с помощью команды systemctl.
+sudo systemctl enable httpd
+Чтобы позволить пользователю EC2 управлять файлами в корневом каталоге по умоланию для вашего веб-сервера Apache, измените владельца и права доступа к каталогу /var/www directory.
+Есть много способов выполнить эту задачу. В этом руководстве вы добавляете пользователя EC2 в группу Apache, чтобы предоставить группе Apache права владельца и редактора на каталог /var/www.
 
 
+### Установка прав доступа к файлам для web-сервера Apache.
+1. Добавьте ec2-user в группу apache.
+sudo usermod -a -G apache ec2-user
+2. Выйдите из системы, чтобы обновить свои разрешения и включить новую группу apache.
+exit
+3. Снова войдите и убедитесь, что группа apache существует.
+groups
+В ответ вы должны получить следующее сообщение
+ec2-user adm wheel apache systemd-journal
+4. Измените групповое владение каталогом /var/www и его содержимым на группу apache.
+sudo chown -R ec2-user:apache /var/www
+5. Измените права доступа к каталогу /var/www и его подкаталогам, чтобы добавить права записи для группы и установить идентификатор группы для подкаталогов, созданных в будущем.
+sudo chmod 2775 /var/www
+find /var/www -type d -exec sudo chmod 2775 {} \;
+6. Рекурсивно измените разрешения для фпйлов в каталоге/var/www и его подкаталогах, чтобы добавить права записи для группы.
+find /var/www -type f -exec sudo chmod 0664 {} \;
+Теперь ec2-user (и любые будущие члены группы apache) могут добавлять, удалять и редактировать файлы в корне документа Apache, что позволяет вам добавлять контент. Например: статический веб-сайт или PHP-приложение.
+### Подлючите ваш Apache web-server к DB instance 
+1. Пока вы все еще подключены к вашему EC2 instance измените каталог на /var/www и создайте новый подкаталог с именем inc.
+cd /var/www
+mkdir inc
+cd inc
+2. Создайте новый файл в категории inc и назовите его dbinfo.inc. Затем вызовите редактор nano
+>dbinfo.inc
+nano dbinfo.inc
+3. Добавьте следующее содержимое в файл dbinfo.inc. 
+Здесь db_instance_endpoint endpoint DB instance без порта и master password пароль от DB instance
+<?php
 
+define('DB_SERVER', 'db_instance_endpoint');
+define('DB_USERNAME', 'tutorial_user');
+define('DB_PASSWORD', 'master password');
+define('DB_DATABASE', 'sample');
+
+?>
+
+4. Сохраните и закройте файл dbinfo.inc.
+5. Измените каталог на /var/www/html.
+cd /var/www/html
+6. Создайте новый файл в директории html и назовите его SamplePage.php. Вызовите nano для редактирования файла
+>SamplePage.php
+nano SamplePage.php
+7. Добавьте следующее содердимое в файл SamplePage.php
+
+<?php include "../inc/dbinfo.inc"; ?>
+<html>
+<body>
+<h1>Sample page</h1>
+<?php
+
+  /* Connect to MySQL and select the database. */
+  $connection = mysqli_connect(DB_SERVER, DB_USERNAME, DB_PASSWORD);
+
+  if (mysqli_connect_errno()) echo "Failed to connect to MySQL: " . mysqli_connect_error();
+
+  $database = mysqli_select_db($connection, DB_DATABASE);
+
+  /* Ensure that the EMPLOYEES table exists. */
+  VerifyEmployeesTable($connection, DB_DATABASE);
+
+  /* If input fields are populated, add a row to the EMPLOYEES table. */
+  $employee_name = htmlentities($_POST['NAME']);
+  $employee_address = htmlentities($_POST['ADDRESS']);
+
+  if (strlen($employee_name) || strlen($employee_address)) {
+    AddEmployee($connection, $employee_name, $employee_address);
+  }
+?>
+
+<!-- Input form -->
+<form action="<?PHP echo $_SERVER['SCRIPT_NAME'] ?>" method="POST">
+  <table border="0">
+    <tr>
+      <td>NAME</td>
+      <td>ADDRESS</td>
+    </tr>
+    <tr>
+      <td>
+        <input type="text" name="NAME" maxlength="45" size="30" />
+      </td>
+      <td>
+        <input type="text" name="ADDRESS" maxlength="90" size="60" />
+      </td>
+      <td>
+        <input type="submit" value="Add Data" />
+      </td>
+    </tr>
+  </table>
+</form>
+
+<!-- Display table data. -->
+<table border="1" cellpadding="2" cellspacing="2">
+  <tr>
+    <td>ID</td>
+    <td>NAME</td>
+    <td>ADDRESS</td>
+  </tr>
+
+<?php
+
+$result = mysqli_query($connection, "SELECT * FROM EMPLOYEES");
+
+while($query_data = mysqli_fetch_row($result)) {
+  echo "<tr>";
+  echo "<td>",$query_data[0], "</td>",
+       "<td>",$query_data[1], "</td>",
+       "<td>",$query_data[2], "</td>";
+  echo "</tr>";
+}
+?>
+
+</table>
+
+<!-- Clean up. -->
+<?php
+
+  mysqli_free_result($result);
+  mysqli_close($connection);
+
+?>
+
+</body>
+</html>
+
+
+<?php
+
+/* Add an employee to the table. */
+function AddEmployee($connection, $name, $address) {
+   $n = mysqli_real_escape_string($connection, $name);
+   $a = mysqli_real_escape_string($connection, $address);
+
+   $query = "INSERT INTO EMPLOYEES (NAME, ADDRESS) VALUES ('$n', '$a');";
+
+   if(!mysqli_query($connection, $query)) echo("<p>Error adding employee data.</p>");
+}
+
+/* Check whether the table exists and, if not, create it. */
+function VerifyEmployeesTable($connection, $dbName) {
+  if(!TableExists("EMPLOYEES", $connection, $dbName))
+  {
+     $query = "CREATE TABLE EMPLOYEES (
+         ID int(11) UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+         NAME VARCHAR(45),
+         ADDRESS VARCHAR(90)
+       )";
+
+     if(!mysqli_query($connection, $query)) echo("<p>Error creating table.</p>");
+  }
+}
+
+/* Check for the existence of a table. */
+function TableExists($tableName, $connection, $dbName) {
+  $t = mysqli_real_escape_string($connection, $tableName);
+  $d = mysqli_real_escape_string($connection, $dbName);
+
+  $checktable = mysqli_query($connection,
+      "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_NAME = '$t' AND TABLE_SCHEMA = '$d'");
+
+  if(mysqli_num_rows($checktable) > 0) return true;
+
+  return false;
+}
+?>                        
+                
+8. Сохраните и закройте файл SamplePage.php.
+9. Убедитесь, что ваш web-сервер успешно подключается к вашему DB instance, открыв веб-браузер и перейдя по адресу http://EC2 instance endpoint/SamplePage.php. Например: http://ec2-55-122-41-31.us-west-2.compute.amazonaws.com/SamplePage.php
+
+Вы можете использовать SamplePage.php для добавления данных в свой DB instance. Добавленные данные затем отобразятся на странице. 
+Чтобы убедиться, что данные были вставлены в таблицу, вы можете установить MySQL в EC2 instance, подключиться к DB instance и запросить таблицу.
+
+Чтобы убедиться, что ваш DB instance максимально безопасен, проверьте, чтобы источники за пределами VPC не могли подключиться к вашему DB instance.
+
+После завершения тестирования web-сервера и базы данных следует удалить DB instance и EC2 instance.
